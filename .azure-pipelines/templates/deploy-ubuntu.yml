@@ -1,0 +1,33 @@
+# Deploy the "drop" artifact to the Ubuntu VMs registered in an Azure DevOps
+# Environment. The agent on each VM pulls the job over outbound HTTPS, so the
+# servers need no inbound port. Approvals/checks live on the Environment itself.
+#
+# deploy.sh (installed by deploy/setup-server.sh) swaps the release, runs the
+# health check and rolls back on its own, so no extra on-failure rollback here:
+# a second rollback would skip past the last good release.
+parameters:
+  - name: environment   # Azure DevOps Environment name
+    type: string
+  - name: instance      # app instance on the host: dev | stage
+    type: string
+    values: [dev, stage]
+
+jobs:
+  - deployment: Deploy
+    displayName: Deploy to ${{ parameters.environment }}
+    environment:
+      name: ${{ parameters.environment }}
+      resourceType: VirtualMachine
+      tags: pipelines-dotnet-core
+    strategy:
+      rolling:
+        maxParallel: 1   # one VM at a time when an environment has several
+        deploy:
+          steps:
+            - download: current
+              artifact: drop
+
+            - script: >
+                sudo /opt/pipelines-dotnet-core/bin/deploy.sh ${{ parameters.instance }}
+                "$(Pipeline.Workspace)/drop/app.tar.gz" "$(Build.BuildNumber)"
+              displayName: Deploy release $(Build.BuildNumber)

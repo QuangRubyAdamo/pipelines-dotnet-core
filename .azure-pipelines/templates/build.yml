@@ -1,0 +1,59 @@
+# Build, scan and package the app once. Every deploy stage consumes the
+# resulting "drop" artifact, so the bits that pass Dev are the bits that ship.
+parameters:
+  - name: dotnetVersion
+    type: string
+    default: '6.0.x'
+  - name: project
+    type: string
+    default: 'pipelines-dotnet-core.csproj'
+
+jobs:
+  - job: Build
+    displayName: Build and package
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: self
+        fetchDepth: 0   # full history so the secret scan covers every commit
+
+      - task: UseDotNet@2
+        displayName: Install .NET SDK ${{ parameters.dotnetVersion }}
+        inputs:
+          packageType: sdk
+          version: ${{ parameters.dotnetVersion }}
+
+      - script: >
+          docker run --rm -v "$(Build.SourcesDirectory):/repo"
+          zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --exit-code 1
+        displayName: Secret scan (Gitleaks)
+
+      - script: dotnet restore ${{ parameters.project }}
+        displayName: Restore
+
+      - script: dotnet build ${{ parameters.project }} -c Release --no-restore
+        displayName: Build
+
+      - script: |
+          dotnet list ${{ parameters.project }} package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -qE '\b(Critical|High)\b' vulnerable.txt; then
+            echo "##vso[task.logissue type=error]NuGet packages with Critical/High vulnerabilities found"
+            exit 1
+          fi
+        displayName: Dependency vulnerability scan
+
+      - script: >
+          dotnet publish ${{ parameters.project }} -c Release --no-build
+          -o "$(Build.ArtifactStagingDirectory)/app"
+        displayName: Publish
+
+      - script: |
+          mkdir -p "$(Build.ArtifactStagingDirectory)/drop"
+          tar -czf "$(Build.ArtifactStagingDirectory)/drop/app.tar.gz" -C "$(Build.ArtifactStagingDirectory)/app" .
+        displayName: Package
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish artifact
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/drop
+          artifact: drop
