@@ -20,6 +20,34 @@ jobs:
           zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --exit-code 1
         displayName: Secret scan (Gitleaks)
 
+      # SAST with the Semgrep C# and OWASP Top 10 rule packs (SQL injection, XSS, etc.).
+      # Every finding is printed to the log and kept as SARIF; only ERROR-severity findings
+      # fail the build, so WARNING/INFO items are reviewed without blocking merges.
+      - script: |
+          set -e
+          out="$(Agent.TempDirectory)/sast"
+          mkdir -p "$out" && chmod 777 "$out"
+          docker run --rm -v "$(Build.SourcesDirectory):/src:ro" -v "$out:/out" -w /src \
+            semgrep/semgrep:1.95.0 semgrep scan \
+            --config p/csharp --config p/owasp-top-ten --metrics=off \
+            --json-output=/out/semgrep.json --sarif-output=/out/CodeAnalysisLogs.sarif .
+          errors=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' "$out/semgrep.json")
+          total=$(jq '.results | length' "$out/semgrep.json")
+          echo "Semgrep findings: $total total, $errors at ERROR severity"
+          if [ "$errors" -gt 0 ]; then
+            echo "##vso[task.logissue type=error]Semgrep found $errors ERROR-severity issue(s); see the findings above"
+            exit 1
+          fi
+        displayName: SAST (Semgrep, OWASP Top 10)
+
+      # Name "CodeAnalysisLogs" is what the SARIF SAST Scans Tab extension reads, if installed.
+      - task: PublishPipelineArtifact@1
+        displayName: Publish SAST report
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: $(Agent.TempDirectory)/sast/CodeAnalysisLogs.sarif
+          artifact: CodeAnalysisLogs
+
       - script: dotnet restore $(project)
         displayName: Restore
 

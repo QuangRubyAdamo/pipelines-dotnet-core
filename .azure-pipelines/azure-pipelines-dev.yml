@@ -31,3 +31,12 @@ stages:
         parameters:
           environment: pipelines-dotnet-core-dev
           instance: dev
+
+  # Runs only after a successful Dev deploy (skipped for PRs, like the deploy itself)
+  - stage: DastDev
+    displayName: DAST Dev
+    dependsOn: DeployDev
+    jobs:
+      - template: templates/dast-zap.yml
+        parameters:
+          targetUrl: https://raffles-demo-dev.adamo.tech

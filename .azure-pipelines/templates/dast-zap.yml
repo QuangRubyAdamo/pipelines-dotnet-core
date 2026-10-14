@@ -1,0 +1,32 @@
+# DAST: OWASP ZAP baseline scan against the freshly deployed environment.
+# Baseline = spider + passive checks only (no attack payloads), safe to run on
+# every deploy. Warnings (e.g. missing security headers) are reported, not fatal
+# (-I); the job fails on FAIL-level rules or when the site cannot be reached.
+# The HTML/JSON report is attached to the run as the "zap-report" artifact.
+parameters:
+  - name: targetUrl
+    type: string
+
+jobs:
+  - job: ZapBaseline
+    displayName: OWASP ZAP baseline scan
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: none
+
+      - script: |
+          set -e
+          out="$(Agent.TempDirectory)/zap"
+          mkdir -p "$out" && chmod 777 "$out"   # ZAP runs as uid 1000 inside the container
+          docker run --rm -v "$out:/zap/wrk:rw" zaproxy/zap-stable:2.16.1 \
+            zap-baseline.py -t "${{ parameters.targetUrl }}" \
+            -r zap-report.html -J zap-report.json -I
+        displayName: ZAP baseline ${{ parameters.targetUrl }}
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish ZAP report
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: $(Agent.TempDirectory)/zap
+          artifact: zap-report

@@ -6,12 +6,15 @@ Hướng dẫn setup và vận hành pipeline cho repo `pipelines-dotnet-core`.
 
 | Hạng mục | Trạng thái | Bằng chứng |
 |---|---|---|
-| ACR `RafflesDemo` (`rafflesdemo.azurecr.io`, RG `ResourceGroup1`, `LegacyRegistryPermissions`) | ✅ Đã tạo (theo output `az acr show` của phiên trước) | Chưa verify lại từ máy local — CLI local không có quyền vào subscription `2dc612d2-…` |
-| Service principal `sp-rafflesdemo-do-pull` (AcrPull) | ❌ Mới đề xuất, **chưa chạy** | — |
-| Azure DevOps project, `ACRConnection`, `UbuntuSSHConnection`, Environments | ❌ Chưa tạo | — |
-| Droplet | ❌ Chưa setup | — |
-| Code trong repo (Dockerfile, `/health`, pipeline YAML, script Droplet) | ✅ Xong, đã test | Build image OK; 24/24 test deploy trên Docker Linux thật (dind) — dùng registry local thay ACR |
-| Chạy pipeline trên Azure DevOps | ❌ Chưa chạy | Phải tạo service connection trước |
+| ACR, service principal pull-only, `ACRConnection`, `UbuntuSSHConnection`, Environments | ✅ Đã tạo | Pipeline Dev + Staging chạy thành công trên commit `0e29615` (GitHub checks `Develop Pipeline`, `Stage Pipeline` = success) |
+| Droplet + Nginx + HTTPS `raffles-demo-dev.adamo.tech` | ✅ Chạy | Web lên qua domain |
+| SAST (Semgrep) + DAST (OWASP ZAP baseline) | ✅ Thêm vào pipeline, đã test local | Semgrep bắt SQL injection (rule `csharp-sqli`, ERROR); ZAP: 0 FAIL / 7 WARN header bảo mật |
+| Branch protection `develop` / `stage` | Xem mục 9 | — |
+
+**Bài học từ lần chạy đầu:**
+- Environment chưa tồn tại → lần chạy đầu tự tạo nhưng job fail; chạy lại là được (hoặc tạo trước + cấp *Pipeline permissions*).
+- Tên service connection phải ghi literal trong YAML; truyền qua `${{ variables.x }}` trong template ra rỗng → `Docker@2` push nhầm lên Docker Hub.
+- *Host name* của SSH connection phải là IP/DNS public, không phải tên Droplet.
 
 ## 1. Kiến trúc
 
@@ -193,7 +196,46 @@ Xem app từ máy cá nhân (không mở port): `ssh -L 8081:127.0.0.1:8081 <adm
 - **User `deploy` thuộc nhóm `docker` ≈ root** trên Droplet. Pipeline chỉ gửi 1 lệnh cố định nên có thể siết thêm bằng *forced command* trong `authorized_keys` (`command="…",no-pty,no-port-forwarding`) — **chưa test với task SSH@0**, cần thử trước khi áp dụng.
 - SSH service connection không có trường pin host key; muốn kiểm tra host key dùng `InstallSSHKey@0` (`knownHostsEntry`) + script `ssh` thay cho `SSH@0`.
 - Không có secret trong repo/image; secret app nằm ở `/etc/pipelines-dotnet-core/<env>.env` (640 root:deploy).
-- Public HTTPS: đặt Nginx/Caddy trên Droplet proxy tới `127.0.0.1:8081/8082` (chưa làm).
+- Public HTTPS: Nginx + Let's Encrypt trên Droplet proxy `raffles-demo-dev.adamo.tech` → `127.0.0.1:8081` (đã làm tay trên Droplet; Staging chưa có domain).
 - ACR tích tụ tag theo BuildId; Basic SKU không có retention policy → dọn định kỳ bằng `az acr run --cmd "acr purge --filter 'pipelines-dotnet-core:.*' --ago 30d --keep 10" /dev/null`.
 - **.NET 6 đã EOL (11/2024)**: image base không còn được vá. Nâng lên .NET 8 = đổi `TargetFramework`, `dotnetVersion`, 2 tag trong `Dockerfile`.
 - Repo chưa có unit test → bước test chỉ cảnh báo; thêm project `*Tests.csproj` là tự chạy.
+
+## 9. Quét bảo mật & quy trình PR
+
+### Các lớp kiểm tra trong pipeline
+
+| Lớp | Công cụ | Khi nào | Chặn khi |
+|---|---|---|---|
+| Secret | Gitleaks | Mọi PR + push | Có secret trong code/history |
+| SAST (SQL injection, XSS, OWASP Top 10) | Semgrep `p/csharp` + `p/owasp-top-ten` | Mọi PR + push, **trước** build | Finding mức **ERROR**; WARNING/INFO chỉ in log |
+| Dependency | `dotnet list package --vulnerable` | Mọi PR + push | CVE High/Critical |
+| DAST | OWASP ZAP baseline (passive) | Sau khi deploy Dev | Rule mức FAIL hoặc site không truy cập được; WARN chỉ báo cáo |
+
+Báo cáo: artifact `CodeAnalysisLogs` (SARIF — cài extension *SARIF SAST Scans Tab* để xem thành tab **Scans**) và `zap-report` (HTML) trong mỗi run.
+
+Kết quả ZAP hiện tại trên app mẫu: 7 cảnh báo header (`X-Frame-Options`, `X-Content-Type-Options`, CSP, Permissions-Policy, …) — xử lý bằng `add_header` trong Nginx hoặc middleware ASP.NET.
+
+### Branch protection (`develop`, `stage`)
+
+- Bắt buộc Pull Request, không push thẳng — áp dụng cả admin.
+- Required status check: `Develop Pipeline` (develop) / `Stage Pipeline` (stage), gắn với app Azure Pipelines; branch phải up-to-date trước khi merge.
+- Phải resolve hết comment; cấm force-push và xoá branch.
+- Số approval bắt buộc: **0** cho demo một người (GitHub không cho tác giả tự approve PR). Team thật: nâng lên 1–2.
+
+Luồng làm việc của dev:
+
+```
+feature/<ticket>  ──PR──▶  develop  (CI + review → merge → deploy Dev → ZAP)
+develop           ──PR──▶  stage    (CI + review → merge → approval → deploy Staging)
+```
+
+### Kịch bản demo: PR có SQL injection bị chặn
+
+Branch `demo/sql-injection` thêm `Controllers/ProductsController.cs` ghép chuỗi SQL với input người dùng.
+
+1. `git push -u origin demo/sql-injection`, mở PR vào `develop`.
+2. Pipeline chạy → bước **SAST (Semgrep, OWASP Top 10)** fail với `csharp.lang.security.sqli.csharp-sqli`, chỉ đúng dòng 12.
+3. Nút **Merge** trên GitHub bị khoá vì check `Develop Pipeline` fail.
+4. Sửa sang `SqlParameter` (`cmd.Parameters.AddWithValue("@name", name)`) → push → check xanh → merge được.
+5. Đóng PR, xoá branch sau demo.
