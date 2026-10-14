@@ -2,8 +2,6 @@
 variables:
   dotnetVersion: '6.0.x'                      # match <TargetFramework> in the .csproj
   project: 'pipelines-dotnet-core.csproj'
-  acrServiceConnection: 'ACRConnection'       # Docker Registry service connection (push to ACR)
-  sshServiceConnection: 'UbuntuSSHConnection' # SSH service connection (deploy user on the Droplet)
   acrLoginServer: 'rafflesdemo.azurecr.io'
   imageRepository: 'pipelines-dotnet-core'
   # One immutable tag per run; the deploy stage pulls exactly this tag.

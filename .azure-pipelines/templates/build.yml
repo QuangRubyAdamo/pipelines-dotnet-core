@@ -70,7 +70,7 @@ jobs:
         condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
         inputs:
           command: buildAndPush
-          containerRegistry: ${{ variables.acrServiceConnection }}
+          containerRegistry: ACRConnection   # service connection names must be literal (resolved at compile time)
           repository: $(imageRepository)
           Dockerfile: Dockerfile
           buildContext: .

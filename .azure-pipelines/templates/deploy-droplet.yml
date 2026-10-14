@@ -31,7 +31,7 @@ jobs:
             - task: SSH@0
               displayName: Deploy $(imageRepository):$(imageTag) to ${{ parameters.instance }}
               inputs:
-                sshEndpoint: ${{ variables.sshServiceConnection }}
+                sshEndpoint: UbuntuSSHConnection   # service connection names must be literal (resolved at compile time)
                 runOptions: commands
                 commands: >-
                   /opt/pipelines-dotnet-core/bin/deploy-container.sh
