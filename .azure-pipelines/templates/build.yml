@@ -1,16 +1,8 @@
-# Build, scan and package the app once. Every deploy stage consumes the
-# resulting "drop" artifact, so the bits that pass Dev are the bits that ship.
-parameters:
-  - name: dotnetVersion
-    type: string
-    default: '6.0.x'
-  - name: project
-    type: string
-    default: 'pipelines-dotnet-core.csproj'
-
+# CI: scan, build, test, then build the container image. The image is pushed to
+# ACR only for real branch pushes; PR runs just prove the Dockerfile still builds.
 jobs:
   - job: Build
-    displayName: Build and package
+    displayName: Build, test and image
     pool:
       vmImage: ubuntu-latest
     steps:
@@ -18,42 +10,68 @@ jobs:
         fetchDepth: 0   # full history so the secret scan covers every commit
 
       - task: UseDotNet@2
-        displayName: Install .NET SDK ${{ parameters.dotnetVersion }}
+        displayName: Install .NET SDK $(dotnetVersion)
         inputs:
           packageType: sdk
-          version: ${{ parameters.dotnetVersion }}
+          version: $(dotnetVersion)
 
       - script: >
           docker run --rm -v "$(Build.SourcesDirectory):/repo"
           zricethezav/gitleaks:v8.21.2 detect --source /repo --redact --exit-code 1
         displayName: Secret scan (Gitleaks)
 
-      - script: dotnet restore ${{ parameters.project }}
+      - script: dotnet restore $(project)
         displayName: Restore
 
-      - script: dotnet build ${{ parameters.project }} -c Release --no-restore
+      - script: dotnet build $(project) -c Release --no-restore
         displayName: Build
 
+      # Runs every *Tests.csproj in the repo; none exist yet, so this only warns until one is added.
       - script: |
-          dotnet list ${{ parameters.project }} package --vulnerable --include-transitive | tee vulnerable.txt
+          set -e
+          projects=$(find . -name '*Tests.csproj' -not -path '*/bin/*' -not -path '*/obj/*')
+          if [ -z "$projects" ]; then
+            echo "##vso[task.logissue type=warning]No *Tests.csproj found; unit tests skipped"
+            exit 0
+          fi
+          for p in $projects; do
+            dotnet test "$p" -c Release --logger trx --results-directory "$(Agent.TempDirectory)/test-results"
+          done
+        displayName: Unit tests
+
+      - task: PublishTestResults@2
+        displayName: Publish test results
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: VSTest
+          testResultsFiles: '$(Agent.TempDirectory)/test-results/*.trx'
+          failTaskOnMissingResultsFile: false
+
+      - script: |
+          dotnet list $(project) package --vulnerable --include-transitive | tee vulnerable.txt
           if grep -qE '\b(Critical|High)\b' vulnerable.txt; then
             echo "##vso[task.logissue type=error]NuGet packages with Critical/High vulnerabilities found"
             exit 1
           fi
         displayName: Dependency vulnerability scan
 
-      - script: >
-          dotnet publish ${{ parameters.project }} -c Release --no-build
-          -o "$(Build.ArtifactStagingDirectory)/app"
-        displayName: Publish
-
-      - script: |
-          mkdir -p "$(Build.ArtifactStagingDirectory)/drop"
-          tar -czf "$(Build.ArtifactStagingDirectory)/drop/app.tar.gz" -C "$(Build.ArtifactStagingDirectory)/app" .
-        displayName: Package
-
-      - task: PublishPipelineArtifact@1
-        displayName: Publish artifact
+      - task: Docker@2
+        displayName: Build image (PR validation)
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
         inputs:
-          targetPath: $(Build.ArtifactStagingDirectory)/drop
-          artifact: drop
+          command: build
+          repository: $(imageRepository)
+          Dockerfile: Dockerfile
+          buildContext: .
+          tags: $(imageTag)
+
+      - task: Docker@2
+        displayName: Build and push $(acrLoginServer)/$(imageRepository):$(imageTag)
+        condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+        inputs:
+          command: buildAndPush
+          containerRegistry: ${{ variables.acrServiceConnection }}
+          repository: $(imageRepository)
+          Dockerfile: Dockerfile
+          buildContext: .
+          tags: $(imageTag)

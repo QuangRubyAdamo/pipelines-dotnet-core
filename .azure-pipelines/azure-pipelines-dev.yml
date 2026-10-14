@@ -1,5 +1,5 @@
-# Dev pipeline: PRs into develop run the build only; every push to develop
-# builds and deploys automatically to the Dev environment.
+# Dev pipeline: PRs into develop run CI only; every push to develop builds,
+# pushes the image to ACR and deploys it to the Dev container on the Droplet.
 name: $(Date:yyyyMMdd).$(Rev:r)-dev
 
 trigger:
@@ -9,6 +9,9 @@ trigger:
 pr:
   branches:
     include: [develop]
+
+variables:
+  - template: templates/variables.yml
 
 stages:
   - stage: Build
@@ -24,7 +27,7 @@ stages:
           ne(variables['Build.Reason'], 'PullRequest'),
           eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
     jobs:
-      - template: templates/deploy-ubuntu.yml
+      - template: templates/deploy-droplet.yml
         parameters:
           environment: pipelines-dotnet-core-dev
           instance: dev

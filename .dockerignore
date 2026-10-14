@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/*.user
+.git/
+.gitignore
+.azure-pipelines/
+deploy/
+docs/
+Dockerfile
+.dockerignore
+*.md
+LICENSE*

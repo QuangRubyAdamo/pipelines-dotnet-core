@@ -1,0 +1,41 @@
+# CD: tell the Droplet to run the image built by this run. Everything that
+# touches the host (pull, candidate health check, swap, restore on failure)
+# lives in deploy/deploy-container.sh on the Droplet, so the pipeline sends a
+# single command and the SSH key needs no broader shell access.
+#
+# The deployment job targets an Azure DevOps Environment without VM resources:
+# it still runs on the Microsoft-hosted agent, but gets approvals/checks and
+# deployment history from the Environment.
+#
+# Rollback: re-run the Deploy stage of an older successful run; it redeploys
+# that run's image tag, which is still in ACR.
+parameters:
+  - name: environment   # Azure DevOps Environment name
+    type: string
+  - name: instance      # app instance on the Droplet: dev | stage
+    type: string
+    values: [dev, stage]
+
+jobs:
+  - deployment: Deploy
+    displayName: Deploy to ${{ parameters.environment }}
+    pool:
+      vmImage: ubuntu-latest
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none   # nothing to download; the Droplet pulls from ACR
+
+            - task: SSH@0
+              displayName: Deploy $(imageRepository):$(imageTag) to ${{ parameters.instance }}
+              inputs:
+                sshEndpoint: ${{ variables.sshServiceConnection }}
+                runOptions: commands
+                commands: >-
+                  /opt/pipelines-dotnet-core/bin/deploy-container.sh
+                  ${{ parameters.instance }}
+                  $(acrLoginServer)/$(imageRepository):$(imageTag)
+                # docker writes progress to stderr; success/failure comes from the exit code
+                failOnStdErr: false

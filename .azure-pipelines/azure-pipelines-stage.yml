@@ -1,6 +1,7 @@
 # Staging pipeline: code reaches stage by PR from develop. PRs into stage run
-# the build only; every push to stage builds and deploys to Staging once the
-# approval configured on the pipelines-dotnet-core-stage Environment is given.
+# CI only; every push to stage builds, pushes the image to ACR and deploys it to
+# the Staging container once the approval on the
+# pipelines-dotnet-core-stage Environment is given.
 name: $(Date:yyyyMMdd).$(Rev:r)-stage
 
 trigger:
@@ -10,6 +11,9 @@ trigger:
 pr:
   branches:
     include: [stage]
+
+variables:
+  - template: templates/variables.yml
 
 stages:
   - stage: Build
@@ -25,7 +29,7 @@ stages:
           ne(variables['Build.Reason'], 'PullRequest'),
           eq(variables['Build.SourceBranch'], 'refs/heads/stage'))
     jobs:
-      - template: templates/deploy-ubuntu.yml
+      - template: templates/deploy-droplet.yml
         parameters:
           environment: pipelines-dotnet-core-stage
           instance: stage
