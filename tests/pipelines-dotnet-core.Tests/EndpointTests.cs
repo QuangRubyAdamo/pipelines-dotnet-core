@@ -26,7 +26,7 @@ namespace pipelines_dotnet_core.Tests
         }
 
         [Theory]
-        [InlineData("/", "Welcome")]
+        [InlineData("/", "A lifetime of care")]
         [InlineData("/Home/Privacy", "Privacy Policy")]
         public async Task Pages_RenderTheirContent(string url, string expectedText)
         {
@@ -34,6 +34,21 @@ namespace pipelines_dotnet_core.Tests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Contains(expectedText, await response.Content.ReadAsStringAsync());
+        }
+
+        [Fact]
+        public async Task Home_IsLabelledAsConceptAndCompatibleWithTheSiteCsp()
+        {
+            var html = await _factory.CreateClient().GetStringAsync("/");
+
+            // The concept must never pass for the official Raffles site or be indexed.
+            Assert.Contains("Concept demo by Adamo", html);
+            Assert.Contains("<meta name=\"robots\" content=\"noindex, nofollow\">", html);
+            // The Content-Security-Policy allows no inline styles and no data: stylesheets,
+            // so styles, scripts and photos must come from files.
+            Assert.DoesNotContain(" style=\"", html);
+            Assert.DoesNotContain("<style", html);
+            Assert.DoesNotContain("data:image", html);
         }
 
         [Fact]

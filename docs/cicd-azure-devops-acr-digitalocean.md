@@ -217,6 +217,8 @@ Báo cáo: artifact `CodeAnalysisLogs` (SARIF — cài extension *SARIF SAST Sca
 
 Header bảo mật do Nginx thêm: `deploy/nginx/security-headers.conf` (cài: copy vào `/etc/nginx/snippets/`, thêm `include snippets/security-headers.conf;` trong `server { }` HTTPS, `nginx -t && systemctl reload nginx`). **Phải cài trước khi merge thay đổi rule ZAP**, nếu không stage DAST sẽ fail.
 
+CSP cho phép Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) vì trang chủ concept dùng DM Sans/Manrope. Mỗi khi snippet đổi, copy lại lên Droplet và reload Nginx **trước** khi merge thay đổi giao diện. Trang chủ không được dùng `style=""` inline hay ảnh `data:` (CSP chặn) — test `Home_IsLabelledAsConceptAndCompatibleWithTheSiteCsp` kiểm tra điều này.
+
 Kết quả test local (app `Staging` sau Nginx): có header → 0 FAIL; bỏ header → 4 FAIL (gate chặn đúng). Cảnh báo còn lại có chủ đích:
 - `10055 CSP: script-src unsafe-inline` — view dùng script inline (fallback CDN, cookie consent); bỏ được khi app chuyển sang nonce.
 - `90004 Spectre isolation` — thiếu `Cross-Origin-Embedder-Policy`; `require-corp` sẽ chặn script từ CDN.
