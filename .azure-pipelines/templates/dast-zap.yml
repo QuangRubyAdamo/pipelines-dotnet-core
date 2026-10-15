@@ -1,7 +1,8 @@
 # DAST: OWASP ZAP baseline scan against the freshly deployed environment.
 # Baseline = spider + passive checks only (no attack payloads), safe to run on
-# every deploy. Warnings (e.g. missing security headers) are reported, not fatal
-# (-I); the job fails on FAIL-level rules or when the site cannot be reached.
+# every deploy. Rule levels come from .azure-pipelines/zap-baseline-rules.conf:
+# FAIL rules (e.g. a security header went missing) fail the job, WARN rules are
+# only reported (-I). The job also fails when the site cannot be reached.
 # The HTML/JSON report is attached to the run as the "zap-report" artifact.
 parameters:
   - name: targetUrl
@@ -13,14 +14,16 @@ jobs:
     pool:
       vmImage: ubuntu-latest
     steps:
-      - checkout: none
+      - checkout: self   # only for the rule levels file
 
       - script: |
           set -e
           out="$(Agent.TempDirectory)/zap"
           mkdir -p "$out" && chmod 777 "$out"   # ZAP runs as uid 1000 inside the container
+          cp .azure-pipelines/zap-baseline-rules.conf "$out/"
           docker run --rm -v "$out:/zap/wrk:rw" zaproxy/zap-stable:2.16.1 \
             zap-baseline.py -t "${{ parameters.targetUrl }}" \
+            -c zap-baseline-rules.conf \
             -r zap-report.html -J zap-report.json -I
         displayName: ZAP baseline ${{ parameters.targetUrl }}
 

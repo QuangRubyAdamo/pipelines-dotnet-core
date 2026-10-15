@@ -210,11 +210,19 @@ Xem app từ máy cá nhân (không mở port): `ssh -L 8081:127.0.0.1:8081 <adm
 | Secret | Gitleaks | Mọi PR + push | Có secret trong code/history |
 | SAST (SQL injection, XSS, OWASP Top 10) | Semgrep `p/csharp` + `p/owasp-top-ten` | Mọi PR + push, **trước** build | Finding mức **ERROR**; WARNING/INFO chỉ in log |
 | Dependency | `dotnet list package --vulnerable` | Mọi PR + push | CVE High/Critical |
-| DAST | OWASP ZAP baseline (passive) | Sau khi deploy Dev | Rule mức FAIL hoặc site không truy cập được; WARN chỉ báo cáo |
+| Unit + integration test | xUnit + `WebApplicationFactory` (`tests/`) | Mọi PR + push | Test fail; kết quả ở tab **Tests** của run |
+| DAST | OWASP ZAP baseline (passive) + `.azure-pipelines/zap-baseline-rules.conf` | Sau khi deploy Dev | Thiếu header bảo mật (10020, 10021, 10035, 10038, 10063 = FAIL) hoặc site không truy cập được; còn lại WARN |
 
 Báo cáo: artifact `CodeAnalysisLogs` (SARIF — cài extension *SARIF SAST Scans Tab* để xem thành tab **Scans**) và `zap-report` (HTML) trong mỗi run.
 
-Kết quả ZAP hiện tại trên app mẫu: 7 cảnh báo header (`X-Frame-Options`, `X-Content-Type-Options`, CSP, Permissions-Policy, …) — xử lý bằng `add_header` trong Nginx hoặc middleware ASP.NET.
+Header bảo mật do Nginx thêm: `deploy/nginx/security-headers.conf` (cài: copy vào `/etc/nginx/snippets/`, thêm `include snippets/security-headers.conf;` trong `server { }` HTTPS, `nginx -t && systemctl reload nginx`). **Phải cài trước khi merge thay đổi rule ZAP**, nếu không stage DAST sẽ fail.
+
+CSP cho phép Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) vì trang chủ concept dùng DM Sans/Manrope. Mỗi khi snippet đổi, copy lại lên Droplet và reload Nginx **trước** khi merge thay đổi giao diện. Trang chủ không được dùng `style=""` inline hay ảnh `data:` (CSP chặn) — test `Home_IsLabelledAsConceptAndCompatibleWithTheSiteCsp` kiểm tra điều này.
+
+Kết quả test local (app `Staging` sau Nginx): có header → 0 FAIL; bỏ header → 4 FAIL (gate chặn đúng). Cảnh báo còn lại có chủ đích:
+- `10055 CSP: script-src unsafe-inline` — view dùng script inline (fallback CDN, cookie consent); bỏ được khi app chuyển sang nonce.
+- `90004 Spectre isolation` — thiếu `Cross-Origin-Embedder-Policy`; `require-corp` sẽ chặn script từ CDN.
+- `10049 Storable and Cacheable Content` — thông tin, không phải lỗ hổng.
 
 ### Branch protection (`develop`, `stage`)
 
